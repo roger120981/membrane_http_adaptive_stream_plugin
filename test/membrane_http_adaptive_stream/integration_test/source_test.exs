@@ -159,12 +159,11 @@ defmodule Membrane.HTTPAdaptiveStream.Source.Test do
   describe "Membrane.HTTPAdaptiveStream.Source demuxes audio and video from" do
     @tag :live
     @tag :tmp_dir
+    @tag :x
     test "Live HLS stream", %{tmp_dir: tmp_dir} do
       index_m3u8 = Path.join(tmp_dir, "index.m3u8")
       generate_live_hls(@bbb_33s_mp4_url, index_m3u8)
-
       await_until_file_exists(index_m3u8)
-      Process.sleep(7_000)
 
       audio_result_file = Path.join(tmp_dir, "audio.aac")
       video_result_file = Path.join(tmp_dir, "video.h264")
@@ -193,9 +192,7 @@ defmodule Membrane.HTTPAdaptiveStream.Source.Test do
     test "Live HLS stream played from the middle", %{tmp_dir: tmp_dir} do
       index_m3u8 = Path.join(tmp_dir, "index.m3u8")
       generate_live_hls(@bbb_33s_mp4_url, index_m3u8)
-
-      await_until_file_exists(index_m3u8)
-      Process.sleep(20_000)
+      :ok = await_until_media_sequence_is_3(index_m3u8)
 
       spec =
         child(:hls_source, %Membrane.HTTPAdaptiveStream.Source{
@@ -251,6 +248,18 @@ defmodule Membrane.HTTPAdaptiveStream.Source.Test do
 
       assert File.read!(audio_result_file) == File.read!(@cut_live_mpeg_ts_audio_ref_file)
       assert File.read!(video_result_file) == File.read!(@cut_live_mpeg_ts_video_ref_file)
+    end
+  end
+
+  defp await_until_media_sequence_is_3(index_m3u8) do
+    with {:ok, content} <- File.read(index_m3u8),
+         true <- String.contains?(content, "#EXT-X-MEDIA-SEQUENCE:3") do
+      :ok
+    else
+      _error ->
+        Logger.debug("Waiting for media sequence to be 3...")
+        Process.sleep(100)
+        await_until_media_sequence_is_3(index_m3u8)
     end
   end
 
