@@ -120,7 +120,12 @@ defmodule Membrane.HTTPAdaptiveStream.Source do
     state =
       Map.from_struct(opts)
       |> Map.merge(%{
-        # status will be either :initialized, :waiting_on_pads or :streaming
+        # status will be either:
+        #  - :initialized
+        #  - :waiting_on_client_genserver_ready
+        #  - :client_genserver_ready
+        #  - :waiting_on_pads
+        #  - :streaming
         status: :initialized,
         client_genserver: nil,
         stream: nil,
@@ -166,20 +171,14 @@ defmodule Membrane.HTTPAdaptiveStream.Source do
 
   @impl true
   def handle_playing(ctx, state) do
-    # both start_streaming/1 and generate_new_tracks_notification/1 functions
-    # call ClientGenServer.get_tracks_info/1 that triggers downloading first
-    # segments of the HLS stream
+    :ok = spawn_client_genserver(ctx, state)
 
-    state = create_client_gen_server(ctx, state)
+    self() |> Process.send_after(:client_genserver_ready_timeout, 60_000)
 
-    if Map.values(state.pad_refs) != [nil, nil] do
-      state |> start_streaming()
-    else
-      state |> generate_new_tracks_notification()
-    end
+    {[], %{state | status: :waiting_on_client_genserver_ready}}
   end
 
-  defp create_client_gen_server(ctx, state) do
+  defp spawn_client_genserver(ctx, state) do
     start_link_arg = %{
       url: state.url,
       variant_selection_policy: state.variant_selection_policy,
@@ -192,18 +191,10 @@ defmodule Membrane.HTTPAdaptiveStream.Source do
       {__MODULE__.ClientGenServer, start_link_arg}
     )
 
-    client_genserver =
-      receive do
-        {:client_genserver, client_genserver} -> client_genserver
-      after
-        5_000 ->
-          raise "Timeout waiting for #{inspect(__MODULE__)}.ClientGenServer initialization"
-      end
-
-    %{state | client_genserver: client_genserver}
+    :ok
   end
 
-  defp generate_new_tracks_notification(%{status: :initialized} = state) do
+  defp generate_new_tracks_notification(%{status: :client_genserver_ready} = state) do
     tracks_info = ClientGenServer.get_tracks_info(state.client_genserver)
 
     new_tracks =
@@ -228,7 +219,7 @@ defmodule Membrane.HTTPAdaptiveStream.Source do
   end
 
   defp start_streaming(%{status: status} = state)
-       when status in [:initialized, :waiting_on_pads] do
+       when status in [:client_genserver_ready, :waiting_on_pads] do
     actions = get_stream_formats(state) ++ get_redemands(state)
     state = %{state | status: :streaming}
     {actions, state}
@@ -350,6 +341,46 @@ defmodule Membrane.HTTPAdaptiveStream.Source do
     Ignoring demand (#{inspect(demand)} buffers) on pad #{inspect(pad_ref)} because this \
     element is still waiting for other pads to be linked.
     """)
+
+    {[], state}
+  end
+
+  @impl true
+  def handle_demand(pad_ref, demand, :buffers, _ctx, state)
+      when state.status == :waiting_on_client_genserver_ready do
+    Membrane.Logger.debug("""
+    Ignoring demand (#{inspect(demand)} buffers) on pad #{inspect(pad_ref)} because this \
+    element is still waiting for ExHLS to start downloading multimedia segments.
+    """)
+
+    {[], state}
+  end
+
+  @impl true
+  def handle_info({:client_genserver_ready, client_genserver}, _ctx, state)
+      when state.status == :waiting_on_client_genserver_ready do
+    state = %{
+      state
+      | client_genserver: client_genserver,
+        status: :client_genserver_ready
+    }
+
+    # both start_streaming/1 and generate_new_tracks_notification/1 functions
+    # call ClientGenServer.get_tracks_info/1 that triggers downloading first
+    # segments of the HLS stream
+
+    if Map.values(state.pad_refs) != [nil, nil] do
+      state |> start_streaming()
+    else
+      state |> generate_new_tracks_notification()
+    end
+  end
+
+  @impl true
+  def handle_info(:client_genserver_ready_timeout, _ctx, state) do
+    if state.status == :waiting_on_client_genserver_ready do
+      raise "Timeout while waiting for ExHLS to download first media segments."
+    end
 
     {[], state}
   end

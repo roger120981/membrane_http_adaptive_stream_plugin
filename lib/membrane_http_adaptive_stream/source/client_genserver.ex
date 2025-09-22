@@ -83,7 +83,7 @@ defmodule Membrane.HTTPAdaptiveStream.Source.ClientGenServer do
         tracks_info: tracks_info
     }
 
-    send(state.source, {:client_genserver, self()})
+    send(state.source, {:client_genserver_ready, self()})
 
     {:noreply, state}
   end
