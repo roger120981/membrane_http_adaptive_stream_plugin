@@ -163,9 +163,7 @@ defmodule Membrane.HTTPAdaptiveStream.Source.Test do
     test "Live HLS stream", %{tmp_dir: tmp_dir} do
       index_m3u8 = Path.join(tmp_dir, "index.m3u8")
       generate_live_hls(@bbb_33s_mp4_url, index_m3u8)
-
       await_until_file_exists(index_m3u8)
-      # Process.sleep(1_000)
 
       audio_result_file = Path.join(tmp_dir, "audio.aac")
       video_result_file = Path.join(tmp_dir, "video.h264")

@@ -365,10 +365,6 @@ defmodule Membrane.HTTPAdaptiveStream.Source do
         status: :client_genserver_ready
     }
 
-    # both start_streaming/1 and generate_new_tracks_notification/1 functions
-    # call ClientGenServer.get_tracks_info/1 that triggers downloading first
-    # segments of the HLS stream
-
     if Map.values(state.pad_refs) != [nil, nil] do
       state |> start_streaming()
     else
